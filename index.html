@@ -93,7 +93,7 @@
       </svg>
       <div>
         <div class="title">Voi QR scanner</div>
-        <div class="badge">Scansione rapida • Copia/Condividi • Archivio locale • Export XLSX • PWA</div>
+        <div class="badge">Scansione rapida • Copia/Condividi • Archivio locale • Export XLSX • PWA (keep-first)</div>
       </div>
     </header>
 
@@ -112,7 +112,7 @@
           </div>
 
           <div class="controls" style="margin-top:12px;">
-            <button id="btnCopy" title="Copia l'elenco (escludendo i duplicati)" class="primary">Copia</button>
+            <button id="btnCopy" title="Copia l'elenco (escludendo i duplicati successivi)" class="primary">Copia</button>
             <button id="btnShare" title="Condividi su WhatsApp" class="success">Condividi su WhatsApp</button>
             <button id="btnExport">Esporta .xlsx</button>
             <button id="btnClear" class="danger">Svuota</button>
@@ -129,7 +129,7 @@
         <h2>Anteprima & validazione</h2>
         <div class="body">
           <div id="preview" class="preview" aria-live="polite"></div>
-          <p class="hint" style="margin-top:8px;">I <b>duplicati</b> sono evidenziati in rosso e <b>non</b> verranno inclusi in Copia/Condividi/Export.</p>
+          <p class="hint" style="margin-top:8px;">La <b>prima</b> occorrenza resta valida; le ripetizioni successive sono evidenziate in rosso e <b>non</b> vengono incluse in Copia/Condividi/Export.</p>
         </div>
       </section>
     </div>
@@ -205,37 +205,49 @@
 
   function setAreaFromCodes(){ area.value = codes.join('\n'); }
   function normalizeInputToCodes(text){ return text.split(/\r?\n/).map(s=>s.trim().toUpperCase()).filter(s=>s.length>0); }
-  function dedupeMap(arr){ const map=new Map(); arr.forEach(code=>map.set(code,(map.get(code)||0)+1)); return map; }
+  function uniqueKeepFirst(arr){ const seen=new Set(); const out=[]; for (const code of arr){ if (CODE_RE.test(code) && !seen.has(code)){ seen.add(code); out.push(code); } } return out; }
+
   function renderPreview(){
     const arr = normalizeInputToCodes(area.value);
-    const map = dedupeMap(arr);
+    const seen = new Set();
     const valid = [];
+    let duplicates = 0;
     preview.innerHTML = '';
     arr.forEach(code => {
       const div = document.createElement('div');
       div.className = 'line';
-      if (!CODE_RE.test(code)) { div.classList.add('dup'); div.textContent = code + '  • non valido'; }
-      else if (map.get(code) > 1) { div.classList.add('dup'); div.textContent = code + '  • duplicato'; }
-      else { div.classList.add('ok'); div.textContent = code; valid.push(code); }
+      if (!CODE_RE.test(code)) {
+        div.classList.add('dup');
+        div.textContent = code + '  • non valido';
+      } else if (seen.has(code)) {
+        div.classList.add('dup');
+        div.textContent = code + '  • duplicato';
+        duplicates++;
+      } else {
+        div.classList.add('ok');
+        div.textContent = code;
+        seen.add(code);
+        valid.push(code);
+      }
       preview.appendChild(div);
     });
-    counter.textContent = `${arr.length} codici (validi: ${valid.length}, duplicati: ${arr.filter(c=>CODE_RE.test(c) && map.get(c)>1).length})`;
-    return { all: arr, valid, map };
+    counter.textContent = `${arr.length} codici (validi: ${valid.length}, duplicati: ${duplicates})`;
+    return { all: arr, valid, duplicates };
   }
   function renderAll(){ setAreaFromCodes(); renderPreview(); }
 
   area.addEventListener('input', ()=>{ codes = normalizeInputToCodes(area.value); saveCurrent(); renderPreview(); });
 
-  function getValidUniqueFromArea(){ const { all, map } = renderPreview(); return all.filter(code => CODE_RE.test(code) && map.get(code) === 1); }
+  function getValidUniqueFromArea(){ const arr = normalizeInputToCodes(area.value); return uniqueKeepFirst(arr); }
   async function copyAll(){ const unique = getValidUniqueFromArea(); const text = unique.join('\n'); try { await navigator.clipboard.writeText(text); toast('Elenco copiato negli appunti'); } catch(e){ alert('Copia non riuscita: ' + e); } }
   async function shareWhatsApp(){ const unique = getValidUniqueFromArea(); const text = unique.join('\n'); const shareData = { text }; try { if (navigator.share) { await navigator.share(shareData); } else { const wurl = 'https://wa.me/?text=' + encodeURIComponent(text); window.open(wurl, '_blank'); } } catch(e){} }
   function exportXLSX(filename, codesArr){ try { const wsData = [['CODICE']].concat(codesArr.map(c=>[c])); const wb = XLSX.utils.book_new(); const ws = XLSX.utils.aoa_to_sheet(wsData); XLSX.utils.book_append_sheet(wb, ws, 'Elenco'); XLSX.writeFile(wb, filename); } catch(e){ alert('Export non riuscito: ' + e); } }
 
-  function renderArchive(){ const list = loadArchive(); archiveList.innerHTML = ''; list.forEach(item => { const wrap=document.createElement('div'); wrap.className='archive-item'; const head=document.createElement('div'); head.className='archive-head'; const left=document.createElement('div'); const dt=new Date(item.timestampISO); left.innerHTML = `<div class="archive-title">${dt.toLocaleString()}</div><div class="archive-count">${item.codes.length} codici</div>`; const actions=document.createElement('div'); actions.className='archive-actions'; const bCopy=document.createElement('button'); bCopy.textContent='Copia'; bCopy.onclick=()=>{ const map=dedupeMap(item.codes); const unique=item.codes.filter(c=>CODE_RE.test(c) && map.get(c)===1); navigator.clipboard.writeText(unique.join('\n')); }; const bExport=document.createElement('button'); bExport.textContent='Esporta .xlsx'; bExport.onclick=()=>{ const map=dedupeMap(item.codes); const unique=item.codes.filter(c=>CODE_RE.test(c) && map.get(c)===1); exportXLSX('archivio-'+dt.toISOString().replace(/[:.]/g,'-')+'.xlsx', unique); }; const bRestore=document.createElement('button'); bRestore.textContent='Ripristina'; bRestore.onclick=()=>{ codes=item.codes.slice(); saveCurrent(); renderAll(); toast('Elenco ripristinato'); window.scrollTo({ top: 0, behavior: 'smooth' }); }; const bDelete=document.createElement('button'); bDelete.textContent='Elimina'; bDelete.className='danger'; bDelete.onclick=()=>{ const arr=loadArchive().filter(x=>x.id!==item.id); saveArchive(arr); renderArchive(); }; actions.append(bCopy,bExport,bRestore,bDelete); head.append(left,actions); wrap.append(head); archiveList.append(wrap); }); }
+  function renderArchive(){ const list = loadArchive(); archiveList.innerHTML = ''; list.forEach(item => { const wrap=document.createElement('div'); wrap.className='archive-item'; const head=document.createElement('div'); head.className='archive-head'; const left=document.createElement('div'); const dt=new Date(item.timestampISO); left.innerHTML = `<div class=\"archive-title\">${dt.toLocaleString()}</div><div class=\"archive-count\">${item.codes.length} codici</div>`; const actions=document.createElement('div'); actions.className='archive-actions'; const bCopy=document.createElement('button'); bCopy.textContent='Copia'; bCopy.onclick=()=>{ const unique = uniqueKeepFirst(item.codes); navigator.clipboard.writeText(unique.join('\n')); }; const bExport=document.createElement('button'); bExport.textContent='Esporta .xlsx'; bExport.onclick=()=>{ const unique = uniqueKeepFirst(item.codes); exportXLSX('archivio-'+dt.toISOString().replace(/[:.]/g,'-')+'.xlsx', unique); }; const bRestore=document.createElement('button'); bRestore.textContent='Ripristina'; bRestore.onclick=()=>{ codes=item.codes.slice(); saveCurrent(); renderAll(); toast('Elenco ripristinato'); window.scrollTo({ top: 0, behavior: 'smooth' }); }; const bDelete=document.createElement('button'); bDelete.textContent='Elimina'; bDelete.className='danger'; bDelete.onclick=()=>{ const arr=loadArchive().filter(x=>x.id!==item.id); saveArchive(arr); renderArchive(); }; actions.append(bCopy,bExport,bRestore,bDelete); head.append(left,actions); wrap.append(head); archiveList.append(wrap); }); }
 
   btnSave.addEventListener('click', ()=>{ const snapshot = normalizeInputToCodes(area.value); if (snapshot.length === 0) { toast('Niente da salvare'); return; } const list = loadArchive(); const entry = { id: 'a_'+Date.now(), timestampISO: new Date().toISOString(), codes: snapshot }; list.unshift(entry); saveArchive(list); clearCurrent(); renderArchive(); toast('Salvato in Archivio'); });
   btnClearArchive.addEventListener('click', ()=>{ if (confirm('Svuotare TUTTO l\'archivio?')){ saveArchive([]); renderArchive(); } });
-  btnExportArchive.addEventListener('click', ()=>{ const list = loadArchive(); try { const wb = XLSX.utils.book_new(); list.forEach(item=>{ const dt=new Date(item.timestampISO); const map=dedupeMap(item.codes); const unique=item.codes.filter(c=>CODE_RE.test(c) && map.get(c)===1); const ws=XLSX.utils.aoa_to_sheet([['CODICE']].concat(unique.map(c=>[c]))); XLSX.utils.book_append_sheet(wb, ws, dt.toLocaleString().slice(0,31)); }); const fname='archivio-completo-'+new Date().toISOString().replace(/[:.]/g,'-')+'.xlsx'; XLSX.writeFile(wb, fname);} catch(e){ alert('Export archivio non riuscito: ' + e); } });
+  btnExportArchive.addEventListener('click', ()=>{ const list = loadArchive(); try { const wb = XLSX.utils.book_new(); list.forEach(item=>{ const dt=new Date(item.timestampISO); const unique = uniqueKeepFirst(item.codes); const ws=XLSX.utils.aoa_to_sheet([['CODICE']].concat(unique.map(c=>[c]))); XLSX.utils.book_append_sheet(wb, ws, dt.toLocaleString().slice(0,31)); }); const fname='archivio-completo-'+new Date().toISOString().replace(/[:.]/g,'-')+'.xlsx'; XLSX.writeFile(wb, fname);} catch(e){ alert('Export archivio non riuscito: ' + e); } });
 
   let toastTimer=null; const toastDiv=document.createElement('div'); toastDiv.style.cssText='position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:#111827;color:#e5e7eb;padding:10px 14px;border-radius:12px;border:1px solid rgba(255,255,255,.15);box-shadow:0 6px 24px rgba(0,0,0,.35);z-index:9999;opacity:0;transition:opacity .2s'; document.body.appendChild(toastDiv);
   function toast(msg){ toastDiv.textContent=msg; toastDiv.style.opacity='1'; clearTimeout(toastTimer); toastTimer=setTimeout(()=>toastDiv.style.opacity='0', 1600); }
