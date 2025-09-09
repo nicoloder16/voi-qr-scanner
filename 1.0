@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Voi QR scanner</title>
+  <meta name="theme-color" content="#0ea5e9" />
+  <style>
+    /* Stili semplificati per esempio */
+    body { font-family: Arial, sans-serif; background:#111; color:#eee; margin:0; padding:1rem; }
+    h1 { color:#0ea5e9; }
+    textarea { width:100%; height:150px; margin-top:1rem; }
+    button { margin:0.2rem; padding:0.5rem 1rem; }
+    #preview .dup { color:#f44; }
+    #preview .ok { color:#4f4; }
+  </style>
+</head>
+<body>
+  <h1>Voi QR scanner</h1>
+
+  <video id="video" width="100%" style="max-width:400px;background:#000"></video><br>
+  <button id="btnStart">Avvia scansione</button>
+  <button id="btnStop">Stop</button>
+  <span id="scanStatus">In attesa…</span>
+
+  <div>
+    <button id="btnCopy">Copia</button>
+    <button id="btnShare">Condividi su WhatsApp</button>
+    <button id="btnExport">Esporta .xlsx</button>
+    <button id="btnClear">Svuota</button>
+    <button id="btnSave">Salva per dopo</button>
+  </div>
+
+  <textarea id="codesArea" placeholder="Codici QR qui..."></textarea>
+  <div id="preview"></div>
+  <div id="archive"></div>
+
+  <script src="https://unpkg.com/@zxing/library@0.20.0/umd/index.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script>
+    // Logica semplificata per scansione e gestione codici
+    const video = document.getElementById('video');
+    const area = document.getElementById('codesArea');
+    const preview = document.getElementById('preview');
+    let codes = [];
+    let scanning = false;
+    let lastScanAt = 0;
+    const SCAN_COOLDOWN = 1000;
+
+    function renderPreview() {
+      preview.innerHTML = '';
+      const map = {};
+      codes.forEach(c=>map[c]=(map[c]||0)+1);
+      codes.forEach(c=>{
+        const div=document.createElement('div');
+        div.textContent=c+(map[c]>1?' (duplicato)':'');
+        div.className= map[c]>1?'dup':'ok';
+        preview.appendChild(div);
+      });
+    }
+
+    async function startScan(){
+      if(scanning) return;
+      scanning=true;
+      const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+      video.srcObject=stream;
+      video.play();
+      const reader=new ZXing.BrowserQRCodeReader();
+      loopScan(reader);
+    }
+
+    function stopScan(){
+      scanning=false;
+      if(video.srcObject){
+        video.srcObject.getTracks().forEach(t=>t.stop());
+      }
+      video.srcObject=null;
+    }
+
+    async function loopScan(reader){
+      while(scanning){
+        try {
+          const r=await reader.decodeOnceFromVideoElement(video);
+          const now=Date.now();
+          if(now-lastScanAt>SCAN_COOLDOWN){
+            lastScanAt=now;
+            const code=r.text.trim().toUpperCase();
+            codes.push(code);
+            area.value=codes.join("\n");
+            renderPreview();
+          }
+        } catch(e){ /* ignore */ }
+      }
+    }
+
+    document.getElementById('btnStart').onclick=startScan;
+    document.getElementById('btnStop').onclick=stopScan;
+    document.getElementById('btnClear').onclick=()=>{codes=[];area.value='';renderPreview();};
+    document.getElementById('btnCopy').onclick=()=>navigator.clipboard.writeText(codes.join("\n"));
+    document.getElementById('btnShare').onclick=()=>{
+      const text=codes.join("\n");
+      const url='https://wa.me/?text='+encodeURIComponent(text);
+      window.open(url,'_blank');
+    };
+    document.getElementById('btnExport').onclick=()=>{
+      const wb=XLSX.utils.book_new();
+      const ws=XLSX.utils.aoa_to_sheet(codes.map(c=>[c]));
+      XLSX.utils.book_append_sheet(wb,ws,'Codici');
+      XLSX.writeFile(wb,'codici.xlsx');
+    };
+    document.getElementById('btnSave').onclick=()=>{
+      const arch=document.getElementById('archive');
+      const div=document.createElement('div');
+      div.textContent=new Date().toLocaleString()+": "+codes.join(", ");
+      arch.appendChild(div);
+      codes=[];area.value='';renderPreview();
+    };
+
+    area.oninput=()=>{
+      codes=area.value.split(/\r?\n/).map(s=>s.trim().toUpperCase()).filter(s=>s);
+      renderPreview();
+    };
+  </script>
+</body>
+</html>
