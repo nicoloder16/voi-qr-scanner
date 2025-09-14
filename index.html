@@ -83,12 +83,113 @@
     .footer-note { margin-top: 18px; color: var(--muted); font-size: 12px; text-align:center; }
     a { color: var(--accent); text-decoration: none; }
   </style>
+  <!-- ZXing + SheetJS (CDN) -->
   <script defer src="https://unpkg.com/@zxing/library@0.20.0/umd/index.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
-  <!-- resto del codice invariato, solo funzioni beep aggiornate -->
+  <div class="wrap">
+    <header>
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <rect x="3" y="3" width="7" height="7" rx="1.5" stroke="#22d3ee" stroke-width="2"/>
+        <rect x="14" y="3" width="7" height="7" rx="1.5" stroke="#22d3ee" stroke-width="2"/>
+        <rect x="3" y="14" width="7" height="7" rx="1.5" stroke="#22d3ee" stroke-width="2"/>
+        <path d="M14 14h7v7h-7z" stroke="#22d3ee" stroke-width="2"/>
+      </svg>
+      <div>
+        <div class="title">Voi QR scanner</div>
+        <div class="badge">Scansione rapida • Copia/Condividi • Archivio locale • Export XLSX • PWA (keep-first)</div>
+      </div>
+    </header>
+
+    <div class="grid">
+      <section class="card">
+        <h2>Scansione</h2>
+        <div class="body">
+          <div class="scanner" id="scannerBox">
+            <video id="video" playsinline muted autoplay></video>
+            <div class="overlay" id="overlay"></div>
+          </div>
+          <div class="controls" style="margin-top:8px;">
+            <button class="primary" id="btnStart">Avvia scansione</button>
+            <button id="btnStop">Stop</button>
+            <span class="count" id="scanStatus">In attesa…</span>
+          </div>
+
+          <div class="controls" style="margin-top:12px;">
+            <button id="btnCopy" title="Copia l'elenco (escludendo i duplicati successivi)" class="primary">Copia</button>
+            <button id="btnShare" title="Condividi su WhatsApp" class="success">Condividi su WhatsApp</button>
+            <button id="btnExport">Esporta .xlsx</button>
+            <button id="btnClear" class="danger">Svuota</button>
+            <button id="btnSave">Salva per dopo</button>
+          </div>
+
+          <p class="hint" style="margin:8px 0 6px;">La finestra seguente è editabile. Ogni riga = 1 codice. Solo alfanumerico, 4 caratteri. Verranno convertiti in <b>MAIUSCOLO</b>.</p>
+          <textarea id="codesArea" class="codes" placeholder="Esempi:\n4NBT\nA12C\nZ9X7"></textarea>
+          <div class="count" id="counter">0 codici (validi: 0, duplicati: 0)</div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Anteprima & validazione</h2>
+        <div class="body">
+          <div id="preview" class="preview" aria-live="polite"></div>
+          <p class="hint" style="margin-top:8px;">La <b>prima</b> occorrenza resta valida; le ripetizioni successive sono evidenziate in rosso e <b>non</b> vengono incluse in Copia/Condividi/Export.</p>
+        </div>
+      </section>
+    </div>
+
+    <section class="card" style="margin-top:12px;">
+      <h2>Archivio</h2>
+      <div class="body">
+        <div class="controls" style="margin-bottom:8px;">
+          <button id="btnExportArchive">Esporta archivio (.xlsx)</button>
+          <button id="btnClearArchive" class="danger">Svuota archivio</button>
+        </div>
+        <div id="archive" class="archive-list"></div>
+      </div>
+    </section>
+
+    <p class="footer-note">Dati salvati in locale (localStorage). Nessun invio al server.</p>
+  </div>
+
+  <dialog id="resumeDialog">
+    <h3 style="margin:0 0 6px 0;">Riprendere la lettura precedente?</h3>
+    <p class="hint" style="margin-top:0;">Abbiamo trovato un elenco in corso dall'ultima sessione. Vuoi continuare oppure iniziare una nuova scansione?</p>
+    <div class="controls" style="margin-top:10px;">
+      <button id="resumeYes" class="primary">Riprendi</button>
+      <button id="resumeNo" class="danger">Nuova scansione</button>
+    </div>
+  </dialog>
+
   <script>
+  const $ = (sel)=>document.querySelector(sel);
+  const video = $('#video');
+  const overlay = $('#overlay');
+  const area = $('#codesArea');
+  const preview = $('#preview');
+  const counter = $('#counter');
+  const scanStatus = $('#scanStatus');
+
+  const btnStart = $('#btnStart');
+  const btnStop = $('#btnStop');
+  const btnCopy = $('#btnCopy');
+  const btnShare = $('#btnShare');
+  const btnExport = $('#btnExport');
+  const btnClear = $('#btnClear');
+  const btnSave = $('#btnSave');
+
+  const resumeDialog = $('#resumeDialog');
+  const resumeYes = $('#resumeYes');
+  const resumeNo = $('#resumeNo');
+
+  const archiveList = $('#archive');
+  const btnExportArchive = $('#btnExportArchive');
+  const btnClearArchive = $('#btnClearArchive');
+
+  const LS_KEYS = { CURRENT: 'voiqr_current', ARCHIVE: 'voiqr_archive' };
+  const CODE_RE = /^[A-Z0-9]{4}$/;
+
   let audioCtx = null;
   let lastBeepEnd = 0;
   function initBeep(){ try { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e){} }
@@ -116,7 +217,187 @@
       lastBeepEnd = start + duration + 0.03;
     } catch(e){}
   }
+  function vibrate(){ if (navigator.vibrate) navigator.vibrate(100); }
+  function flashOk(){ overlay.classList.remove('flash-ok'); void overlay.offsetWidth; overlay.classList.add('flash-ok'); }
+
+  let codes = [];
+  let scanning = false;
+  let lastScanAt = 0;
+  const SCAN_COOLDOWN = 1000;
+
+  function loadCurrent(){ try { const raw = localStorage.getItem(LS_KEYS.CURRENT); if (raw){ codes = JSON.parse(raw) || []; } } catch(e){} }
+  function saveCurrent(){ try { localStorage.setItem(LS_KEYS.CURRENT, JSON.stringify(codes)); } catch(e){} }
+  function clearCurrent(){ codes = []; saveCurrent(); renderAll(); }
+
+  function loadArchive(){ try { const raw = localStorage.getItem(LS_KEYS.ARCHIVE); return raw ? JSON.parse(raw) : []; } catch(e){ return []; } }
+  function saveArchive(list){ try { localStorage.setItem(LS_KEYS.ARCHIVE, JSON.stringify(list)); } catch(e){} }
+
+  function setAreaFromCodes(){ area.value = codes.join('\n'); }
+  function normalizeInputToCodes(text){ return text.split(/\r?\n/).map(s=>s.trim().toUpperCase()).filter(s=>s.length>0); }
+  function uniqueKeepFirst(arr){ const seen=new Set(); const out=[]; for (const code of arr){ if (CODE_RE.test(code) && !seen.has(code)){ seen.add(code); out.push(code); } } return out; }
+
+  function renderPreview(){
+    const arr = normalizeInputToCodes(area.value);
+    const seen = new Set();
+    const valid = [];
+    let duplicates = 0;
+    preview.innerHTML = '';
+    arr.forEach(code => {
+      const div = document.createElement('div');
+      div.className = 'line';
+      if (!CODE_RE.test(code)) {
+        div.classList.add('dup');
+        div.textContent = code + '  • non valido';
+      } else if (seen.has(code)) {
+        div.classList.add('dup');
+        div.textContent = code + '  • duplicato';
+        duplicates++;
+      } else {
+        div.classList.add('ok');
+        div.textContent = code;
+        seen.add(code);
+        valid.push(code);
+      }
+      preview.appendChild(div);
+    });
+    counter.textContent = `${arr.length} codici (validi: ${valid.length}, duplicati: ${duplicates})`;
+    return { all: arr, valid, duplicates };
+  }
+  function renderAll(){ setAreaFromCodes(); renderPreview(); }
+
+  area.addEventListener('input', ()=>{ codes = normalizeInputToCodes(area.value); saveCurrent(); renderPreview(); });
+
+  function getValidUniqueFromArea(){ const arr = normalizeInputToCodes(area.value); return uniqueKeepFirst(arr); }
+  async function copyAll(){ const unique = getValidUniqueFromArea(); const text = unique.join('\n'); try { await navigator.clipboard.writeText(text); toast('Elenco copiato negli appunti'); } catch(e){ alert('Copia non riuscita: ' + e); } }
+  async function shareWhatsApp(){ const unique = getValidUniqueFromArea(); const text = unique.join('\n'); const shareData = { text }; try { if (navigator.share) { await navigator.share(shareData); } else { const wurl = 'https://wa.me/?text=' + encodeURIComponent(text); window.open(wurl, '_blank'); } } catch(e){} }
+  function exportXLSX(filename, codesArr){ try { const wsData = [['CODICE']].concat(codesArr.map(c=>[c])); const wb = XLSX.utils.book_new(); const ws = XLSX.utils.aoa_to_sheet(wsData); XLSX.utils.book_append_sheet(wb, ws, 'Elenco'); XLSX.writeFile(wb, filename); } catch(e){ alert('Export non riuscito: ' + e); } }
+
+  function renderArchive(){ const list = loadArchive(); archiveList.innerHTML = ''; list.forEach(item => { const wrap=document.createElement('div'); wrap.className='archive-item'; const head=document.createElement('div'); head.className='archive-head'; const left=document.createElement('div'); const dt=new Date(item.timestampISO); left.innerHTML = `<div class=\"archive-title\">${dt.toLocaleString()}</div><div class=\"archive-count\">${item.codes.length} codici</div>`; const actions=document.createElement('div'); actions.className='archive-actions'; const bCopy=document.createElement('button'); bCopy.textContent='Copia'; bCopy.onclick=()=>{ const unique = uniqueKeepFirst(item.codes); navigator.clipboard.writeText(unique.join('\n')); }; const bExport=document.createElement('button'); bExport.textContent='Esporta .xlsx'; bExport.onclick=()=>{ const unique = uniqueKeepFirst(item.codes); exportXLSX('archivio-'+dt.toISOString().replace(/[:.]/g,'-')+'.xlsx', unique); }; const bRestore=document.createElement('button'); bRestore.textContent='Ripristina'; bRestore.onclick=()=>{ codes=item.codes.slice(); saveCurrent(); renderAll(); toast('Elenco ripristinato'); window.scrollTo({ top: 0, behavior: 'smooth' }); }; const bDelete=document.createElement('button'); bDelete.textContent='Elimina'; bDelete.className='danger'; bDelete.onclick=()=>{ const arr=loadArchive().filter(x=>x.id!==item.id); saveArchive(arr); renderArchive(); }; actions.append(bCopy,bExport,bRestore,bDelete); head.append(left,actions); wrap.append(head); archiveList.append(wrap); }); }
+
+  btnSave.addEventListener('click', ()=>{ const snapshot = normalizeInputToCodes(area.value); if (snapshot.length === 0) { toast('Niente da salvare'); return; } const list = loadArchive(); const entry = { id: 'a_'+Date.now(), timestampISO: new Date().toISOString(), codes: snapshot }; list.unshift(entry); saveArchive(list); clearCurrent(); renderArchive(); toast('Salvato in Archivio'); });
+  btnClearArchive.addEventListener('click', ()=>{ if (confirm('Svuotare TUTTO l\'archivio?')){ saveArchive([]); renderArchive(); } });
+  btnExportArchive.addEventListener('click', ()=>{ const list = loadArchive(); try { const wb = XLSX.utils.book_new(); list.forEach(item=>{ const dt=new Date(item.timestampISO); const unique = uniqueKeepFirst(item.codes); const ws=XLSX.utils.aoa_to_sheet([['CODICE']].concat(unique.map(c=>[c]))); XLSX.utils.book_append_sheet(wb, ws, dt.toLocaleString().slice(0,31)); }); const fname='archivio-completo-'+new Date().toISOString().replace(/[:.]/g,'-')+'.xlsx'; XLSX.writeFile(wb, fname);} catch(e){ alert('Export archivio non riuscito: ' + e); } });
+
+  let toastTimer=null; const toastDiv=document.createElement('div'); toastDiv.style.cssText='position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:#111827;color:#e5e7eb;padding:10px 14px;border-radius:12px;border:1px solid rgba(255,255,255,.15);box-shadow:0 6px 24px rgba(0,0,0,.35);z-index:9999;opacity:0;transition:opacity .2s'; document.body.appendChild(toastDiv);
+  function toast(msg){ toastDiv.textContent=msg; toastDiv.style.opacity='1'; clearTimeout(toastTimer); toastTimer=setTimeout(()=>toastDiv.style.opacity='0', 1600); }
+
+  let mediaStream=null; let barcodeDetector=null; let zxingReader=null; let bdRunning=false;
+
+  async function startCamera(){
+    if (mediaStream) return;
+    try{
+      mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+      video.setAttribute('playsinline',''); video.muted = true; video.srcObject = mediaStream; await video.play();
+    }catch(e){ alert('Impossibile accedere alla fotocamera: '+e.message); }
+  }
+  function stopCamera(){ if (mediaStream){ mediaStream.getTracks().forEach(t=>t.stop()); mediaStream=null; } if (video){ video.pause(); video.srcObject=null; } }
+
+  function hasBarcodeDetector(){ return 'BarcodeDetector' in window; }
+
+  async function startScan(){
+    initBeep();
+    await startCamera();
+    scanning = true; scanStatus.textContent = 'Scansione attiva';
+    overlay.classList.remove('flash-ok');
+
+    if (hasBarcodeDetector()){
+      try{ barcodeDetector = new window.BarcodeDetector({ formats: ['qr_code'] }); }catch{ barcodeDetector = null; }
+    }
+    if (barcodeDetector){ loopDetectBarcode(); }
+    else { loopDetectZXing(); }
+  }
+  function stopScan(){
+    scanning = false; scanStatus.textContent = 'In attesa…';
+    bdRunning = false; // ferma loop barcodeDetector
+    if (zxingReader){ try{ zxingReader.reset(); }catch(e){} }
+    stopCamera();
+  }
+
+  function loopDetectBarcode(){
+    bdRunning = true; const COOLDOWN=SCAN_COOLDOWN;
+    const tick = async () => {
+      if (!bdRunning || !scanning) return;
+      try{
+        const codesFound = await barcodeDetector.detect(video);
+        if (codesFound && codesFound.length){
+          const txt = codesFound[0].rawValue || '';
+          const now = Date.now();
+          if (now - lastScanAt > COOLDOWN) { lastScanAt = now; handleRawText(txt); }
+        }
+      }catch(e){}
+      setTimeout(tick, 150);
+    };
+    tick();
+  }
+
+  function loopDetectZXing(){
+    if (!zxingReader){ zxingReader = new ZXing.BrowserMultiFormatReader(); }
+    try{
+      zxingReader.decodeFromVideoDevice(null, video, (result, err)=>{
+        if (!scanning) return;
+        if (result) {
+          const txt = result.getText();
+          const now = Date.now();
+          if (now - lastScanAt > SCAN_COOLDOWN) { lastScanAt = now; handleRawText(txt); }
+        }
+        // err ignorato: ZXing continua autonomamente
+      });
+    }catch(e){ console.error(e); toast('Errore scanner'); }
+  }
+
+  function handleRawText(txt){
+    const code = (txt||'').trim().toUpperCase();
+    const m = code.match(/[A-Z0-9]{4}/);
+    const clean = m ? m[0] : '';
+    if (!CODE_RE.test(clean)) { toast('Codice non valido'); return; }
+
+    const arr = normalizeInputToCodes(area.value);
+    arr.push(clean);
+    area.value = arr.join('\n');
+    codes = arr; saveCurrent();
+
+    renderPreview();
+    flashOk(); beep(); vibrate();
+  }
+
+  async function setupPWA(){
+    const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='512' height='512'>\n<rect width='100%' height='100%' fill='#0ea5e9'/>\n<g transform='translate(96,96) scale(1.2)' fill='none' stroke='white' stroke-width='28'>\n<rect x='0' y='0' width='96' height='96' rx='18'/>\n<rect x='128' y='0' width='96' height='96' rx='18'/>\n<rect x='0' y='128' width='96' height='96' rx='18'/>\n<rect x='128' y='128' width='96' height='96' rx='18'/>\n</g>\n</svg>`;
+    const svgBlob = new Blob([svg], {type:'image/svg+xml'});
+    const svgUrl = URL.createObjectURL(svgBlob);
+
+    const manifest = { name: 'Voi QR scanner', short_name: 'Voi QR', start_url: '.', display: 'standalone', background_color: '#0b1020', theme_color: '#0ea5e9', icons: [ { src: svgUrl, sizes: '512x512', type: 'image/svg+xml', purpose: 'any maskable' } ] };
+    const manBlob = new Blob([JSON.stringify(manifest)], {type:'application/json'});
+    const manUrl = URL.createObjectURL(manBlob);
+    const link = document.createElement('link'); link.rel='manifest'; link.href=manUrl; document.head.appendChild(link);
+
+    const swCode = `self.addEventListener('install', e=>{ self.skipWaiting(); e.waitUntil(caches.open('voi-qr-v1').then(c=>c.addAll(['./']))); });\nself.addEventListener('activate', e=>self.clients.claim());\nself.addEventListener('fetch', e=>{ e.respondWith(caches.match(e.request).then(r=> r || fetch(e.request))); });`;
+    const swBlob = new Blob([swCode], {type:'text/javascript'});
+    const swUrl = URL.createObjectURL(swBlob);
+    if ('serviceWorker' in navigator){ try { await navigator.serviceWorker.register(swUrl); } catch(e){} }
+  }
+
+  function maybeAskResume(){ const stored = localStorage.getItem(LS_KEYS.CURRENT); if (stored){ try{ const arr = JSON.parse(stored)||[]; if (arr.length>0){ resumeDialog.showModal(); } }catch(e){} } }
+  resumeYes.addEventListener('click', ()=>{ loadCurrent(); renderAll(); resumeDialog.close(); });
+  resumeNo.addEventListener('click', ()=>{ clearCurrent(); resumeDialog.close(); });
+
+  btnStart.addEventListener('click', startScan);
+  btnStop.addEventListener('click', stopScan);
+  btnCopy.addEventListener('click', copyAll);
+  btnShare.addEventListener('click', shareWhatsApp);
+  btnExport.addEventListener('click', ()=>{ const unique = getValidUniqueFromArea(); exportXLSX('elenco-'+new Date().toISOString().replace(/[:.]/g,'-')+'.xlsx', unique); });
+  btnClear.addEventListener('click', ()=>{ if (confirm('Svuotare l\'elenco corrente?')) clearCurrent(); });
+
+  (async function init(){
+    await setupPWA();
+    renderArchive();
+    maybeAskResume();
+    if (!localStorage.getItem(LS_KEYS.CURRENT)) { clearCurrent(); }
+  })();
   </script>
+  <!-- ZXing & SheetJS in fondo per sicurezza su alcuni browser -->
+  <script src="https://unpkg.com/@zxing/library@0.20.0/umd/index.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </body>
 </html>
+
 
