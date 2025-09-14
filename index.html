@@ -18,9 +18,9 @@
       --btn: #1e293b;
     }
     * { box-sizing: border-box; }
-    html, body { height: 100%; }
+    html, body { height: 100%; margin:0; padding:0; }
     body {
-      margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
       background: radial-gradient(1200px 600px at 80% -10%, #172554 0%, transparent 60%), var(--bg);
       color: var(--text);
     }
@@ -38,15 +38,12 @@
     .card .body { padding: 12px; }
 
     .scanner { position: relative; border-radius: 14px; overflow: hidden; border: 2px solid rgba(255,255,255,.14); }
-    video { width: 100%; height: auto; display:block; background:#000; object-fit: cover; }
+    #scannerBox { width: 100%; max-width: 500px; margin: 0 auto; aspect-ratio: 1 / 1; }
+    @media (max-width: 880px) { #scannerBox { max-width: 400px; } }
+    video { width: 100%; height: 100%; display:block; background:#000; object-fit: cover; }
     .overlay { position:absolute; inset:0; pointer-events:none; box-shadow: inset 0 0 0 2px rgba(255,255,255,.18); }
     .flash-ok { animation: flashOk .3s ease; }
     @keyframes flashOk { from { box-shadow: inset 0 0 0 4px var(--ok); } to { box-shadow: inset 0 0 0 2px rgba(255,255,255,.18); } }
-
-    /* Riduci l'area video su mobile a metà larghezza */
-    @media (max-width: 880px) {
-      #scannerBox { width: 50%; margin: 0 auto; aspect-ratio: 16/9; }
-    }
 
     .controls { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
     button, .btn {
@@ -117,15 +114,15 @@
           </div>
 
           <div class="controls" style="margin-top:12px;">
-            <button id="btnCopy" title="Copia l'elenco (escludendo i duplicati successivi)" class="primary">Copia</button>
-            <button id="btnShare" title="Condividi su WhatsApp" class="success">Condividi su WhatsApp</button>
+            <button id="btnCopy" class="primary">Copia</button>
+            <button id="btnShare" class="success">Condividi su WhatsApp</button>
             <button id="btnExport">Esporta .xlsx</button>
             <button id="btnClear" class="danger">Svuota</button>
             <button id="btnSave">Salva per dopo</button>
           </div>
 
-          <p class="hint" style="margin:8px 0 6px;">La finestra seguente è editabile. Ogni riga = 1 codice. Solo alfanumerico, 4 caratteri. Verranno convertiti in <b>MAIUSCOLO</b>.</p>
-          <textarea id="codesArea" class="codes" placeholder="Esempi:\n4NBT\nA12C\nZ9X7"></textarea>
+          <p class="hint" style="margin:8px 0 6px;">La finestra seguente è editabile. Ogni riga = 1 codice. Verranno convertiti in <b>MAIUSCOLO</b>.</p>
+          <textarea id="codesArea" class="codes" placeholder="Esempi:\nAB45\n3HTY\nAB45"></textarea>
           <div class="count" id="counter">0 codici (validi: 0, duplicati: 0)</div>
         </div>
       </section>
@@ -134,7 +131,7 @@
         <h2>Anteprima & validazione</h2>
         <div class="body">
           <div id="preview" class="preview" aria-live="polite"></div>
-          <p class="hint" style="margin-top:8px;">La <b>prima</b> occorrenza resta valida; le ripetizioni successive sono evidenziate in rosso e <b>non</b> vengono incluse in Copia/Condividi/Export.</p>
+          <p class="hint" style="margin-top:8px;">La <b>prima</b> occorrenza resta valida; le ripetizioni successive sono escluse da Copia/Condividi/Export.</p>
         </div>
       </section>
     </div>
@@ -190,8 +187,7 @@
   const LS_KEYS = { CURRENT: 'voiqr_current', ARCHIVE: 'voiqr_archive' };
   const CODE_RE = /^[A-Z0-9]{4}$/;
 
-  let audioCtx = null;
-  let lastBeepEnd = 0;
+  let audioCtx = null; let lastBeepEnd = 0;
   function initBeep(){ try { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e){} }
   function beep(){
     try {
@@ -199,21 +195,15 @@
       const now = audioCtx.currentTime;
       const start = Math.max(now, lastBeepEnd);
       const duration = 0.12;
-
       const o = audioCtx.createOscillator();
       const g = audioCtx.createGain();
       o.type = 'square';
       o.frequency.setValueAtTime(880, start);
-      o.connect(g);
-      g.connect(audioCtx.destination);
-
+      o.connect(g); g.connect(audioCtx.destination);
       g.gain.setValueAtTime(0.0001, start);
       g.gain.exponentialRampToValueAtTime(0.22, start + 0.012);
       g.gain.exponentialRampToValueAtTime(0.0001, start + duration);
-
-      o.start(start);
-      o.stop(start + duration + 0.02);
-
+      o.start(start); o.stop(start + duration + 0.02);
       lastBeepEnd = start + duration + 0.03;
     } catch(e){}
   }
@@ -394,9 +384,6 @@
     if (!localStorage.getItem(LS_KEYS.CURRENT)) { clearCurrent(); }
   })();
   </script>
-  <!-- ZXing & SheetJS in fondo per sicurezza su alcuni browser -->
-  <script src="https://unpkg.com/@zxing/library@0.20.0/umd/index.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </body>
 </html>
 
