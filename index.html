@@ -32,9 +32,22 @@
     .grid { display:grid; gap: 12px; }
     @media(min-width: 880px){ .grid { grid-template-columns: 1.1fr .9fr; } }
 
-    .card { background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.0)); border: 1px solid rgba(255,255,255,.08);
-            border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,.18); overflow: hidden; }
-    .card h2 { margin: 0; font-size: 16px; font-weight: 700; padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,.07); color: #c7d2fe; background: rgba(99,102,241,.08); }
+    .card {
+      background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.0));
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: 16px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.18);
+      overflow: hidden;
+    }
+    .card h2 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 700;
+      padding: 12px 14px;
+      border-bottom: 1px solid rgba(255,255,255,.07);
+      color: #c7d2fe;
+      background: rgba(99,102,241,.08);
+    }
     .card .body { padding: 12px; }
 
     .scanner { position: relative; border-radius: 14px; overflow: hidden; border: 2px solid rgba(255,255,255,.14); }
@@ -47,8 +60,15 @@
 
     .controls { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
     button, .btn {
-      appearance: none; border: 1px solid rgba(255,255,255,.12); background: var(--btn); color: var(--text);
-      padding: 10px 12px; border-radius: 12px; font-weight: 600; cursor: pointer; transition: transform .05s ease, background .2s ease;
+      appearance: none;
+      border: 1px solid rgba(255,255,255,.12);
+      background: var(--btn);
+      color: var(--text);
+      padding: 10px 12px;
+      border-radius: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform .05s ease, background .2s ease;
     }
     button:hover { background:#243244; }
     button:active { transform: scale(.98); }
@@ -56,13 +76,30 @@
     .danger { background: #7f1d1d; }
     .success { background: #14532d; }
 
-    textarea.codes { width: 100%; min-height: 220px; resize: vertical; background: #0b1224; color: var(--text);
-      border: 1px solid rgba(255,255,255,.12); border-radius: 12px; padding: 10px 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 15px; }
+    textarea.codes {
+      width: 100%;
+      min-height: 220px;
+      resize: vertical;
+      background: #0b1224;
+      color: var(--text);
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 15px;
+    }
 
     .hint { color: var(--muted); font-size: 13px; }
     .count { font-size: 12px; color: var(--muted); }
 
-    .preview { background: #0b1224; border: 1px solid rgba(255,255,255,.12); border-radius: 12px; padding: 8px 10px; min-height: 220px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+    .preview {
+      background: #0b1224;
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 12px;
+      padding: 8px 10px;
+      min-height: 220px;
+      font-family: ui-monospace, Menlo, Consolas, monospace;
+    }
     .line { padding: 4px 6px; border-radius: 6px; }
     .dup  { color: #fecaca; background: rgba(239,68,68,.12); border: 1px dashed rgba(239,68,68,.45); }
     .ok   { color: #d1fae5; background: rgba(16,185,129,.10); border: 1px solid rgba(16,185,129,.18); }
@@ -176,7 +213,7 @@
           </div>
 
           <p class="hint" style="margin:8px 0 6px;">La finestra seguente è editabile. Ogni riga = 1 codice. Verranno convertiti in <b>MAIUSCOLO</b>.</p>
-          <textarea id="codesArea" class="codes" placeholder="Esempi:\nAB45\n3HTY\nAB45"></textarea>
+          <textarea id="codesArea" class="codes"></textarea>
           <div class="count" id="counter">0 codici (validi: 0, duplicati: 0)</div>
         </div>
       </section>
@@ -257,7 +294,8 @@
         return m ? m[0] : '';
       },
       hint: 'Modalità TARGHE: accetta solo codici alfanumerici di 4 caratteri.',
-      label: 'Targhe'
+      label: 'Targhe',
+      placeholder: 'Esempi:\nAB45\n3HTY\nZ9K2'
     },
     batterie: {
       // seriali batterie, es. BPFCV21L7H11886
@@ -266,7 +304,8 @@
         return (raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
       },
       hint: 'Modalità BATTERIE: legge seriali alfanumerici (es. BPFCV21L7H11886).',
-      label: 'Batterie'
+      label: 'Batterie',
+      placeholder: 'Esempi:\nBPFCV21L7H11886\nBPFCV21L7H11887\nBPFCV21L7H11888'
     }
   };
 
@@ -289,6 +328,7 @@
       btn.classList.toggle('active', m === currentMode);
     });
     if (modeHint && cfg) modeHint.textContent = cfg.hint;
+    if (area && cfg && cfg.placeholder) area.placeholder = cfg.placeholder;
     try { localStorage.setItem(LS_KEYS.MODE, currentMode); } catch(e){}
     renderPreview(); // rivalida l'elenco corrente in base alla modalità
   }
@@ -331,12 +371,32 @@
   let lastScanAt = 0;
   const SCAN_COOLDOWN = 1000;
 
-  function loadCurrent(){ try { const raw = localStorage.getItem(LS_KEYS.CURRENT); if (raw){ codes = JSON.parse(raw) || []; } } catch(e){} }
-  function saveCurrent(){ try { localStorage.setItem(LS_KEYS.CURRENT, JSON.stringify(codes)); } catch(e){} }
-  function clearCurrent(){ codes = []; saveCurrent(); renderAll(); }
+  function loadCurrent(){
+    try {
+      const raw = localStorage.getItem(LS_KEYS.CURRENT);
+      if (raw){ codes = JSON.parse(raw) || []; }
+    } catch(e){}
+  }
+  function saveCurrent(){
+    try { localStorage.setItem(LS_KEYS.CURRENT, JSON.stringify(codes)); } catch(e){}
+  }
+  function clearCurrent(){
+    codes = [];
+    saveCurrent();
+    renderAll();
+  }
 
-  function loadArchive(){ try { const raw = localStorage.getItem(LS_KEYS.ARCHIVE); return raw ? JSON.parse(raw) : []; } catch(e){ return []; } }
-  function saveArchive(list){ try { localStorage.setItem(LS_KEYS.ARCHIVE, JSON.stringify(list)); } catch(e){} }
+  function loadArchive(){
+    try {
+      const raw = localStorage.getItem(LS_KEYS.ARCHIVE);
+      return raw ? JSON.parse(raw) : [];
+    } catch(e){
+      return [];
+    }
+  }
+  function saveArchive(list){
+    try { localStorage.setItem(LS_KEYS.ARCHIVE, JSON.stringify(list)); } catch(e){}
+  }
 
   function setAreaFromCodes(){ area.value = codes.join('\n'); }
   function normalizeInputToCodes(text){
@@ -392,7 +452,11 @@
   }
   function renderAll(){ setAreaFromCodes(); renderPreview(); }
 
-  area.addEventListener('input', ()=>{ codes = normalizeInputToCodes(area.value); saveCurrent(); renderPreview(); });
+  area.addEventListener('input', ()=>{
+    codes = normalizeInputToCodes(area.value);
+    saveCurrent();
+    renderPreview();
+  });
 
   function getValidUniqueFromArea(){
     const arr = normalizeInputToCodes(area.value);
@@ -417,6 +481,7 @@
       }
     } catch(e){}
   }
+
   function exportXLSX(filename, codesArr){
     try {
       const wsData = [['CODICE']].concat(codesArr.map(c=>[c]));
@@ -425,6 +490,16 @@
       XLSX.utils.book_append_sheet(wb, ws, 'Elenco');
       XLSX.writeFile(wb, filename);
     } catch(e){ alert('Export non riuscito: ' + e); }
+  }
+
+  function makeTimestamp(date = new Date()){
+    const pad = n => String(n).padStart(2,'0');
+    const y = date.getFullYear();
+    const m = pad(date.getMonth()+1);
+    const d = pad(date.getDate());
+    const hh = pad(date.getHours());
+    const mm = pad(date.getMinutes());
+    return `${y}-${m}-${d}_${hh}-${mm}`;
   }
 
   function renderArchive(){
@@ -459,7 +534,10 @@
       bExport.textContent='Esporta .xlsx';
       bExport.onclick=()=>{
         const unique = uniqueKeepFirst(item.codes, item.mode || 'targhe');
-        exportXLSX('archivio-'+dt.toISOString().replace(/[:.]/g,'-')+'.xlsx', unique);
+        const ts = makeTimestamp(dt);
+        const modeSlug = item.mode || 'targhe';
+        const fname = `archivio_${modeSlug}_${ts}.xlsx`;
+        exportXLSX(fname, unique);
       };
 
       const bRestore=document.createElement('button');
@@ -520,9 +598,11 @@
         const dt=new Date(item.timestampISO);
         const unique = uniqueKeepFirst(item.codes, item.mode || 'targhe');
         const ws=XLSX.utils.aoa_to_sheet([['CODICE']].concat(unique.map(c=>[c])));
-        XLSX.utils.book_append_sheet(wb, ws, dt.toLocaleString().slice(0,31));
+        const sheetName = dt.toLocaleString().slice(0,31);
+        XLSX.utils.book_append_sheet(wb, ws, sheetName);
       });
-      const fname='archivio-completo-'+new Date().toISOString().replace(/[:.]/g,'-')+'.xlsx';
+      const ts = makeTimestamp();
+      const fname=`archivio_completo_${ts}.xlsx`;
       XLSX.writeFile(wb, fname);
     } catch(e){
       alert('Export archivio non riuscito: ' + e);
@@ -717,7 +797,9 @@ self.addEventListener('fetch', e=>{ e.respondWith(caches.match(e.request).then(r
   btnShare.addEventListener('click', shareWhatsApp);
   btnExport.addEventListener('click', ()=>{
     const unique = getValidUniqueFromArea();
-    exportXLSX('elenco-'+new Date().toISOString().replace(/[:.]/g,'-')+'.xlsx', unique);
+    const ts = makeTimestamp();
+    const fname = `${currentMode}_${ts}.xlsx`;
+    exportXLSX(fname, unique);
   });
   btnClear.addEventListener('click', ()=>{
     if (confirm('Svuotare l\'elenco corrente?')) clearCurrent();
@@ -725,7 +807,7 @@ self.addEventListener('fetch', e=>{ e.respondWith(caches.match(e.request).then(r
 
   (async function init(){
     await setupPWA();
-    applyModeToUI();   // imposta modalità di default / salvata
+    applyModeToUI();   // imposta modalità (di default / salvata) + placeholder
     renderArchive();
     maybeAskResume();
     if (!localStorage.getItem(LS_KEYS.CURRENT)) {
@@ -735,6 +817,7 @@ self.addEventListener('fetch', e=>{ e.respondWith(caches.match(e.request).then(r
   </script>
 </body>
 </html>
+
 
 
 
