@@ -79,6 +79,47 @@
 
     .footer-note { margin-top: 18px; color: var(--muted); font-size: 12px; text-align:center; }
     a { color: var(--accent); text-decoration: none; }
+
+    /* --- Selettore modalità --- */
+    .mode-block {
+      margin-bottom: 10px;
+    }
+    .mode-label {
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .mode-switch {
+      display: inline-flex;
+      gap: 4px;
+      padding: 3px;
+      background: rgba(15,23,42,.95);
+      border-radius: 999px;
+      border: 1px solid rgba(148,163,184,.35);
+    }
+    button.mode-btn {
+      background: transparent;
+      border: none;
+      padding: 6px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--muted);
+      border-radius: 999px;
+    }
+    button.mode-btn:hover {
+      background: rgba(15,23,42,.9);
+    }
+    button.mode-btn.active {
+      background: #0369a1;
+      color: #e2e8f0;
+      box-shadow: 0 0 0 1px rgba(255,255,255,.15);
+    }
+    .mode-hint {
+      display:block;
+      margin-top:4px;
+      font-size:12px;
+      color: var(--muted);
+    }
   </style>
   <!-- ZXing + SheetJS (CDN) -->
   <script defer src="https://unpkg.com/@zxing/library@0.20.0/umd/index.min.js"></script>
@@ -103,6 +144,19 @@
       <section class="card">
         <h2>Scansione</h2>
         <div class="body">
+
+          <!-- BLOCCO SELETTORE MODALITÀ -->
+          <div class="mode-block">
+            <div class="mode-label">Modalità lettura</div>
+            <div class="mode-switch">
+              <button type="button" class="mode-btn active" data-mode="targhe">Targhe</button>
+              <button type="button" class="mode-btn" data-mode="batterie">Batterie</button>
+            </div>
+            <span id="modeHint" class="mode-hint">
+              Modalità TARGHE: accetta solo codici alfanumerici di 4 caratteri.
+            </span>
+          </div>
+
           <div class="scanner" id="scannerBox">
             <video id="video" playsinline muted autoplay></video>
             <div class="overlay" id="overlay"></div>
@@ -184,8 +238,70 @@
   const btnExportArchive = $('#btnExportArchive');
   const btnClearArchive = $('#btnClearArchive');
 
-  const LS_KEYS = { CURRENT: 'voiqr_current', ARCHIVE: 'voiqr_archive' };
-  const CODE_RE = /^[A-Z0-9]{4}$/;
+  const modeHint = $('#modeHint');
+  const modeButtons = document.querySelectorAll('.mode-btn');
+
+  const LS_KEYS = {
+    CURRENT: 'voiqr_current',
+    ARCHIVE: 'voiqr_archive',
+    MODE: 'voiqr_mode'
+  };
+
+  // Configurazione modalità
+  const MODE_CONFIG = {
+    targhe: {
+      codeRe: /^[A-Z0-9]{4}$/,
+      extract(raw) {
+        const text = (raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+        const m = text.match(/[A-Z0-9]{4}/);
+        return m ? m[0] : '';
+      },
+      hint: 'Modalità TARGHE: accetta solo codici alfanumerici di 4 caratteri.',
+      label: 'Targhe'
+    },
+    batterie: {
+      // seriali batterie, es. BPFCV21L7H11886
+      codeRe: /^[A-Z0-9]{5,40}$/,
+      extract(raw) {
+        return (raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+      },
+      hint: 'Modalità BATTERIE: legge seriali alfanumerici (es. BPFCV21L7H11886).',
+      label: 'Batterie'
+    }
+  };
+
+  let currentMode = (()=>{
+    try {
+      return localStorage.getItem(LS_KEYS.MODE) || 'targhe';
+    } catch(e){
+      return 'targhe';
+    }
+  })();
+
+  function getModeConfig(mode = currentMode){
+    return MODE_CONFIG[mode] || MODE_CONFIG.targhe;
+  }
+
+  function applyModeToUI(){
+    const cfg = getModeConfig();
+    modeButtons.forEach(btn => {
+      const m = btn.dataset.mode;
+      btn.classList.toggle('active', m === currentMode);
+    });
+    if (modeHint && cfg) modeHint.textContent = cfg.hint;
+    try { localStorage.setItem(LS_KEYS.MODE, currentMode); } catch(e){}
+    renderPreview(); // rivalida l'elenco corrente in base alla modalità
+  }
+
+  modeButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const m = btn.dataset.mode;
+      if (m && m !== currentMode) {
+        currentMode = m;
+        applyModeToUI();
+      }
+    });
+  });
 
   let audioCtx = null; let lastBeepEnd = 0;
   function initBeep(){ try { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e){} }
@@ -223,8 +339,26 @@
   function saveArchive(list){ try { localStorage.setItem(LS_KEYS.ARCHIVE, JSON.stringify(list)); } catch(e){} }
 
   function setAreaFromCodes(){ area.value = codes.join('\n'); }
-  function normalizeInputToCodes(text){ return text.split(/\r?\n/).map(s=>s.trim().toUpperCase()).filter(s=>s.length>0); }
-  function uniqueKeepFirst(arr){ const seen=new Set(); const out=[]; for (const code of arr){ if (CODE_RE.test(code) && !seen.has(code)){ seen.add(code); out.push(code); } } return out; }
+  function normalizeInputToCodes(text){
+    return text
+      .split(/\r?\n/)
+      .map(s=>s.trim().toUpperCase())
+      .filter(s=>s.length>0);
+  }
+
+  function uniqueKeepFirst(arr, mode){
+    const cfg = getModeConfig(mode);
+    const re = cfg.codeRe;
+    const seen=new Set();
+    const out=[];
+    for (const code of arr){
+      if (re.test(code) && !seen.has(code)){
+        seen.add(code);
+        out.push(code);
+      }
+    }
+    return out;
+  }
 
   function renderPreview(){
     const arr = normalizeInputToCodes(area.value);
@@ -232,10 +366,13 @@
     const valid = [];
     let duplicates = 0;
     preview.innerHTML = '';
+    const cfg = getModeConfig();
+    const re = cfg.codeRe;
+
     arr.forEach(code => {
       const div = document.createElement('div');
       div.className = 'line';
-      if (!CODE_RE.test(code)) {
+      if (!re.test(code)) {
         div.classList.add('dup');
         div.textContent = code + '  • non valido';
       } else if (seen.has(code)) {
@@ -257,30 +394,183 @@
 
   area.addEventListener('input', ()=>{ codes = normalizeInputToCodes(area.value); saveCurrent(); renderPreview(); });
 
-  function getValidUniqueFromArea(){ const arr = normalizeInputToCodes(area.value); return uniqueKeepFirst(arr); }
-  async function copyAll(){ const unique = getValidUniqueFromArea(); const text = unique.join('\n'); try { await navigator.clipboard.writeText(text); toast('Elenco copiato negli appunti'); } catch(e){ alert('Copia non riuscita: ' + e); } }
-  async function shareWhatsApp(){ const unique = getValidUniqueFromArea(); const text = unique.join('\n'); const shareData = { text }; try { if (navigator.share) { await navigator.share(shareData); } else { const wurl = 'https://wa.me/?text=' + encodeURIComponent(text); window.open(wurl, '_blank'); } } catch(e){} }
-  function exportXLSX(filename, codesArr){ try { const wsData = [['CODICE']].concat(codesArr.map(c=>[c])); const wb = XLSX.utils.book_new(); const ws = XLSX.utils.aoa_to_sheet(wsData); XLSX.utils.book_append_sheet(wb, ws, 'Elenco'); XLSX.writeFile(wb, filename); } catch(e){ alert('Export non riuscito: ' + e); } }
+  function getValidUniqueFromArea(){
+    const arr = normalizeInputToCodes(area.value);
+    return uniqueKeepFirst(arr, currentMode);
+  }
 
-  function renderArchive(){ const list = loadArchive(); archiveList.innerHTML = ''; list.forEach(item => { const wrap=document.createElement('div'); wrap.className='archive-item'; const head=document.createElement('div'); head.className='archive-head'; const left=document.createElement('div'); const dt=new Date(item.timestampISO); left.innerHTML = `<div class=\"archive-title\">${dt.toLocaleString()}</div><div class=\"archive-count\">${item.codes.length} codici</div>`; const actions=document.createElement('div'); actions.className='archive-actions'; const bCopy=document.createElement('button'); bCopy.textContent='Copia'; bCopy.onclick=()=>{ const unique = uniqueKeepFirst(item.codes); navigator.clipboard.writeText(unique.join('\n')); }; const bExport=document.createElement('button'); bExport.textContent='Esporta .xlsx'; bExport.onclick=()=>{ const unique = uniqueKeepFirst(item.codes); exportXLSX('archivio-'+dt.toISOString().replace(/[:.]/g,'-')+'.xlsx', unique); }; const bRestore=document.createElement('button'); bRestore.textContent='Ripristina'; bRestore.onclick=()=>{ codes=item.codes.slice(); saveCurrent(); renderAll(); toast('Elenco ripristinato'); window.scrollTo({ top: 0, behavior: 'smooth' }); }; const bDelete=document.createElement('button'); bDelete.textContent='Elimina'; bDelete.className='danger'; bDelete.onclick=()=>{ const arr=loadArchive().filter(x=>x.id!==item.id); saveArchive(arr); renderArchive(); }; actions.append(bCopy,bExport,bRestore,bDelete); head.append(left,actions); wrap.append(head); archiveList.append(wrap); }); }
+  async function copyAll(){
+    const unique = getValidUniqueFromArea();
+    const text = unique.join('\n');
+    try { await navigator.clipboard.writeText(text); toast('Elenco copiato negli appunti'); } catch(e){ alert('Copia non riuscita: ' + e); }
+  }
+  async function shareWhatsApp(){
+    const unique = getValidUniqueFromArea();
+    const text = unique.join('\n');
+    const shareData = { text };
+    try {
+      if (navigator.share) {
+        await navigator.share(shareData);
+      } else {
+        const wurl = 'https://wa.me/?text=' + encodeURIComponent(text);
+        window.open(wurl, '_blank');
+      }
+    } catch(e){}
+  }
+  function exportXLSX(filename, codesArr){
+    try {
+      const wsData = [['CODICE']].concat(codesArr.map(c=>[c]));
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+      XLSX.utils.book_append_sheet(wb, ws, 'Elenco');
+      XLSX.writeFile(wb, filename);
+    } catch(e){ alert('Export non riuscito: ' + e); }
+  }
 
-  btnSave.addEventListener('click', ()=>{ const snapshot = normalizeInputToCodes(area.value); if (snapshot.length === 0) { toast('Niente da salvare'); return; } const list = loadArchive(); const entry = { id: 'a_'+Date.now(), timestampISO: new Date().toISOString(), codes: snapshot }; list.unshift(entry); saveArchive(list); clearCurrent(); renderArchive(); toast('Salvato in Archivio'); });
-  btnClearArchive.addEventListener('click', ()=>{ if (confirm('Svuotare TUTTO l\'archivio?')){ saveArchive([]); renderArchive(); } });
-  btnExportArchive.addEventListener('click', ()=>{ const list = loadArchive(); try { const wb = XLSX.utils.book_new(); list.forEach(item=>{ const dt=new Date(item.timestampISO); const unique = uniqueKeepFirst(item.codes); const ws=XLSX.utils.aoa_to_sheet([['CODICE']].concat(unique.map(c=>[c]))); XLSX.utils.book_append_sheet(wb, ws, dt.toLocaleString().slice(0,31)); }); const fname='archivio-completo-'+new Date().toISOString().replace(/[:.]/g,'-')+'.xlsx'; XLSX.writeFile(wb, fname);} catch(e){ alert('Export archivio non riuscito: ' + e); } });
+  function renderArchive(){
+    const list = loadArchive();
+    archiveList.innerHTML = '';
+    list.forEach(item => {
+      const wrap=document.createElement('div');
+      wrap.className='archive-item';
 
-  let toastTimer=null; const toastDiv=document.createElement('div'); toastDiv.style.cssText='position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:#111827;color:#e5e7eb;padding:10px 14px;border-radius:12px;border:1px solid rgba(255,255,255,.15);box-shadow:0 6px 24px rgba(0,0,0,.35);z-index:9999;opacity:0;transition:opacity .2s'; document.body.appendChild(toastDiv);
-  function toast(msg){ toastDiv.textContent=msg; toastDiv.style.opacity='1'; clearTimeout(toastTimer); toastTimer=setTimeout(()=>toastDiv.style.opacity='0', 1600); }
+      const head=document.createElement('div');
+      head.className='archive-head';
+
+      const left=document.createElement('div');
+      const dt=new Date(item.timestampISO);
+      const modeLabel = (item.mode === 'batterie') ? 'Batterie' : 'Targhe';
+
+      left.innerHTML =
+        `<div class="archive-title">${dt.toLocaleString()}</div>` +
+        `<div class="archive-count">${item.codes.length} codici • ${modeLabel}</div>`;
+
+      const actions=document.createElement('div');
+      actions.className='archive-actions';
+
+      const bCopy=document.createElement('button');
+      bCopy.textContent='Copia';
+      bCopy.onclick=()=>{
+        const unique = uniqueKeepFirst(item.codes, item.mode || 'targhe');
+        navigator.clipboard.writeText(unique.join('\n'));
+      };
+
+      const bExport=document.createElement('button');
+      bExport.textContent='Esporta .xlsx';
+      bExport.onclick=()=>{
+        const unique = uniqueKeepFirst(item.codes, item.mode || 'targhe');
+        exportXLSX('archivio-'+dt.toISOString().replace(/[:.]/g,'-')+'.xlsx', unique);
+      };
+
+      const bRestore=document.createElement('button');
+      bRestore.textContent='Ripristina';
+      bRestore.onclick=()=>{
+        codes=item.codes.slice();
+        saveCurrent();
+        renderAll();
+        toast('Elenco ripristinato');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      };
+
+      const bDelete=document.createElement('button');
+      bDelete.textContent='Elimina';
+      bDelete.className='danger';
+      bDelete.onclick=()=>{
+        const arr=loadArchive().filter(x=>x.id!==item.id);
+        saveArchive(arr);
+        renderArchive();
+      };
+
+      actions.append(bCopy,bExport,bRestore,bDelete);
+      head.append(left,actions);
+      wrap.append(head);
+      archiveList.append(wrap);
+    });
+  }
+
+  btnSave.addEventListener('click', ()=>{
+    const snapshot = normalizeInputToCodes(area.value);
+    if (snapshot.length === 0) { toast('Niente da salvare'); return; }
+    const list = loadArchive();
+    const entry = {
+      id: 'a_'+Date.now(),
+      timestampISO: new Date().toISOString(),
+      codes: snapshot,
+      mode: currentMode
+    };
+    list.unshift(entry);
+    saveArchive(list);
+    clearCurrent();
+    renderArchive();
+    toast('Salvato in Archivio');
+  });
+
+  btnClearArchive.addEventListener('click', ()=>{
+    if (confirm('Svuotare TUTTO l\'archivio?')){
+      saveArchive([]);
+      renderArchive();
+    }
+  });
+
+  btnExportArchive.addEventListener('click', ()=>{
+    const list = loadArchive();
+    try {
+      const wb = XLSX.utils.book_new();
+      list.forEach(item=>{
+        const dt=new Date(item.timestampISO);
+        const unique = uniqueKeepFirst(item.codes, item.mode || 'targhe');
+        const ws=XLSX.utils.aoa_to_sheet([['CODICE']].concat(unique.map(c=>[c])));
+        XLSX.utils.book_append_sheet(wb, ws, dt.toLocaleString().slice(0,31));
+      });
+      const fname='archivio-completo-'+new Date().toISOString().replace(/[:.]/g,'-')+'.xlsx';
+      XLSX.writeFile(wb, fname);
+    } catch(e){
+      alert('Export archivio non riuscito: ' + e);
+    }
+  });
+
+  let toastTimer=null;
+  const toastDiv=document.createElement('div');
+  toastDiv.style.cssText='position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:#111827;color:#e5e7eb;padding:10px 14px;border-radius:12px;border:1px solid rgba(255,255,255,.15);box-shadow:0 6px 24px rgba(0,0,0,.35);z-index:9999;opacity:0;transition:opacity .2s';
+  document.body.appendChild(toastDiv);
+  function toast(msg){
+    toastDiv.textContent=msg;
+    toastDiv.style.opacity='1';
+    clearTimeout(toastTimer);
+    toastTimer=setTimeout(()=>toastDiv.style.opacity='0', 1600);
+  }
 
   let mediaStream=null; let barcodeDetector=null; let zxingReader=null; let bdRunning=false;
 
   async function startCamera(){
     if (mediaStream) return;
     try{
-      mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
-      video.setAttribute('playsinline',''); video.muted = true; video.srcObject = mediaStream; await video.play();
-    }catch(e){ alert('Impossibile accedere alla fotocamera: '+e.message); }
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
+        audio: false
+      });
+      video.setAttribute('playsinline','');
+      video.muted = true;
+      video.srcObject = mediaStream;
+      await video.play();
+    }catch(e){
+      alert('Impossibile accedere alla fotocamera: '+e.message);
+    }
   }
-  function stopCamera(){ if (mediaStream){ mediaStream.getTracks().forEach(t=>t.stop()); mediaStream=null; } if (video){ video.pause(); video.srcObject=null; } }
+  function stopCamera(){
+    if (mediaStream){
+      mediaStream.getTracks().forEach(t=>t.stop());
+      mediaStream=null;
+    }
+    if (video){
+      video.pause();
+      video.srcObject=null;
+    }
+  }
 
   function hasBarcodeDetector(){ return 'BarcodeDetector' in window; }
 
@@ -291,7 +581,11 @@
     overlay.classList.remove('flash-ok');
 
     if (hasBarcodeDetector()){
-      try{ barcodeDetector = new window.BarcodeDetector({ formats: ['qr_code'] }); }catch{ barcodeDetector = null; }
+      try{
+        barcodeDetector = new window.BarcodeDetector({ formats: ['qr_code'] });
+      }catch{
+        barcodeDetector = null;
+      }
     }
     if (barcodeDetector){ loopDetectBarcode(); }
     else { loopDetectZXing(); }
@@ -336,10 +630,14 @@
   }
 
   function handleRawText(txt){
-    const code = (txt||'').trim().toUpperCase();
-    const m = code.match(/[A-Z0-9]{4}/);
-    const clean = m ? m[0] : '';
-    if (!CODE_RE.test(clean)) { toast('Codice non valido'); return; }
+    const raw = (txt||'').trim();
+    const cfg = getModeConfig();
+    const clean = cfg.extract(raw);
+
+    if (!cfg.codeRe.test(clean)) {
+      toast('Codice non valido in modalità ' + cfg.label);
+      return;
+    }
 
     const arr = normalizeInputToCodes(area.value);
     arr.push(clean);
@@ -351,40 +649,92 @@
   }
 
   async function setupPWA(){
-    const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='512' height='512'>\n<rect width='100%' height='100%' fill='#0ea5e9'/>\n<g transform='translate(96,96) scale(1.2)' fill='none' stroke='white' stroke-width='28'>\n<rect x='0' y='0' width='96' height='96' rx='18'/>\n<rect x='128' y='0' width='96' height='96' rx='18'/>\n<rect x='0' y='128' width='96' height='96' rx='18'/>\n<rect x='128' y='128' width='96' height='96' rx='18'/>\n</g>\n</svg>`;
+    const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='512' height='512'>
+<rect width='100%' height='100%' fill='#0ea5e9'/>
+<g transform='translate(96,96) scale(1.2)' fill='none' stroke='white' stroke-width='28'>
+<rect x='0' y='0' width='96' height='96' rx='18'/>
+<rect x='128' y='0' width='96' height='96' rx='18'/>
+<rect x='0' y='128' width='96' height='96' rx='18'/>
+<rect x='128' y='128' width='96' height='96' rx='18'/>
+</g>
+</svg>`;
     const svgBlob = new Blob([svg], {type:'image/svg+xml'});
     const svgUrl = URL.createObjectURL(svgBlob);
 
-    const manifest = { name: 'Voi QR scanner', short_name: 'Voi QR', start_url: '.', display: 'standalone', background_color: '#0b1020', theme_color: '#0ea5e9', icons: [ { src: svgUrl, sizes: '512x512', type: 'image/svg+xml', purpose: 'any maskable' } ] };
+    const manifest = {
+      name: 'Voi QR scanner',
+      short_name: 'Voi QR',
+      start_url: '.',
+      display: 'standalone',
+      background_color: '#0b1020',
+      theme_color: '#0ea5e9',
+      icons: [
+        { src: svgUrl, sizes: '512x512', type: 'image/svg+xml', purpose: 'any maskable' }
+      ]
+    };
     const manBlob = new Blob([JSON.stringify(manifest)], {type:'application/json'});
     const manUrl = URL.createObjectURL(manBlob);
-    const link = document.createElement('link'); link.rel='manifest'; link.href=manUrl; document.head.appendChild(link);
+    const link = document.createElement('link');
+    link.rel='manifest';
+    link.href=manUrl;
+    document.head.appendChild(link);
 
-    const swCode = `self.addEventListener('install', e=>{ self.skipWaiting(); e.waitUntil(caches.open('voi-qr-v1').then(c=>c.addAll(['./']))); });\nself.addEventListener('activate', e=>self.clients.claim());\nself.addEventListener('fetch', e=>{ e.respondWith(caches.match(e.request).then(r=> r || fetch(e.request))); });`;
+    const swCode =
+`self.addEventListener('install', e=>{ self.skipWaiting(); e.waitUntil(caches.open('voi-qr-v1').then(c=>c.addAll(['./']))); });
+self.addEventListener('activate', e=>self.clients.claim());
+self.addEventListener('fetch', e=>{ e.respondWith(caches.match(e.request).then(r=> r || fetch(e.request))); });`;
     const swBlob = new Blob([swCode], {type:'text/javascript'});
     const swUrl = URL.createObjectURL(swBlob);
-    if ('serviceWorker' in navigator){ try { await navigator.serviceWorker.register(swUrl); } catch(e){} }
+    if ('serviceWorker' in navigator){
+      try { await navigator.serviceWorker.register(swUrl); } catch(e){}
+    }
   }
 
-  function maybeAskResume(){ const stored = localStorage.getItem(LS_KEYS.CURRENT); if (stored){ try{ const arr = JSON.parse(stored)||[]; if (arr.length>0){ resumeDialog.showModal(); } }catch(e){} } }
-  resumeYes.addEventListener('click', ()=>{ loadCurrent(); renderAll(); resumeDialog.close(); });
-  resumeNo.addEventListener('click', ()=>{ clearCurrent(); resumeDialog.close(); });
+  function maybeAskResume(){
+    const stored = localStorage.getItem(LS_KEYS.CURRENT);
+    if (stored){
+      try{
+        const arr = JSON.parse(stored)||[];
+        if (arr.length>0){
+          resumeDialog.showModal();
+        }
+      }catch(e){}
+    }
+  }
+  resumeYes.addEventListener('click', ()=>{
+    loadCurrent();
+    renderAll();
+    resumeDialog.close();
+  });
+  resumeNo.addEventListener('click', ()=>{
+    clearCurrent();
+    resumeDialog.close();
+  });
 
   btnStart.addEventListener('click', startScan);
   btnStop.addEventListener('click', stopScan);
   btnCopy.addEventListener('click', copyAll);
   btnShare.addEventListener('click', shareWhatsApp);
-  btnExport.addEventListener('click', ()=>{ const unique = getValidUniqueFromArea(); exportXLSX('elenco-'+new Date().toISOString().replace(/[:.]/g,'-')+'.xlsx', unique); });
-  btnClear.addEventListener('click', ()=>{ if (confirm('Svuotare l\'elenco corrente?')) clearCurrent(); });
+  btnExport.addEventListener('click', ()=>{
+    const unique = getValidUniqueFromArea();
+    exportXLSX('elenco-'+new Date().toISOString().replace(/[:.]/g,'-')+'.xlsx', unique);
+  });
+  btnClear.addEventListener('click', ()=>{
+    if (confirm('Svuotare l\'elenco corrente?')) clearCurrent();
+  });
 
   (async function init(){
     await setupPWA();
+    applyModeToUI();   // imposta modalità di default / salvata
     renderArchive();
     maybeAskResume();
-    if (!localStorage.getItem(LS_KEYS.CURRENT)) { clearCurrent(); }
+    if (!localStorage.getItem(LS_KEYS.CURRENT)) {
+      clearCurrent();
+    }
   })();
   </script>
 </body>
 </html>
+
 
 
