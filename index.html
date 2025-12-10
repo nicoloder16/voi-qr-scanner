@@ -622,6 +622,26 @@
 
   let mediaStream=null; let barcodeDetector=null; let zxingReader=null; let bdRunning=false;
 
+    function getBarcodeFormatsForCurrentMode() {
+  if (currentMode === 'targhe') {
+    // Solo QR code
+    return ['qr_code'];
+  }
+  // Modalità BATTERIE: QR + vari barcode 1D comuni
+  return [
+    'qr_code',
+    'code_128',
+    'code_39',
+    'ean_13',
+    'ean_8',
+    'upc_a',
+    'upc_e',
+    'itf',
+    'data_matrix',
+    'pdf417'
+  ];
+}
+
   async function startCamera(){
     if (mediaStream) return;
     try{
@@ -654,22 +674,46 @@
 
   function hasBarcodeDetector(){ return 'BarcodeDetector' in window; }
 
-  async function startScan(){
-    initBeep();
-    await startCamera();
-    scanning = true; scanStatus.textContent = 'Scansione attiva';
-    overlay.classList.remove('flash-ok');
+ async function startScan(){
+  initBeep();
+  await startCamera();
+  scanning = true;
+  scanStatus.textContent = 'Scansione attiva';
+  overlay.classList.remove('flash-ok');
 
-    if (hasBarcodeDetector()){
-      try{
-        barcodeDetector = new window.BarcodeDetector({ formats: ['qr_code'] });
-      }catch{
-        barcodeDetector = null;
+  barcodeDetector = null;
+
+  if (hasBarcodeDetector()){
+    try {
+      const desiredFormats = getBarcodeFormatsForCurrentMode();
+      let formatsToUse = desiredFormats;
+
+      // Se il browser espone i formati supportati, filtriamo
+      if (window.BarcodeDetector.getSupportedFormats) {
+        const supported = await window.BarcodeDetector.getSupportedFormats();
+        const filtered = desiredFormats.filter(f => supported.includes(f));
+        formatsToUse = filtered.length ? filtered : desiredFormats;
       }
+
+      // Se qualcosa va storto con la lista, lasciamo che usi i default
+      barcodeDetector = formatsToUse && formatsToUse.length
+        ? new window.BarcodeDetector({ formats: formatsToUse })
+        : new window.BarcodeDetector();
+
+    } catch(e) {
+      barcodeDetector = null;
     }
-    if (barcodeDetector){ loopDetectBarcode(); }
-    else { loopDetectZXing(); }
   }
+
+  if (barcodeDetector){
+    loopDetectBarcode();
+  } else {
+    // fallback ZXing: continua a leggere tutto, ma
+    // in modalità targhe i seriali lunghi falliscono la regex a 4 char
+    loopDetectZXing();
+  }
+}
+
   function stopScan(){
     scanning = false; scanStatus.textContent = 'In attesa…';
     bdRunning = false; // ferma loop barcodeDetector
