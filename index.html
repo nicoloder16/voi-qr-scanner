@@ -285,29 +285,39 @@
   };
 
   // Configurazione modalità
-  const MODE_CONFIG = {
-    targhe: {
-      codeRe: /^[A-Z0-9]{4}$/,
-      extract(raw) {
-        const text = (raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-        const m = text.match(/[A-Z0-9]{4}/);
-        return m ? m[0] : '';
-      },
-      hint: 'Modalità TARGHE: accetta solo codici alfanumerici di 4 caratteri.',
-      label: 'Targhe',
-      placeholder: 'Esempi:\nAB45\n3HTY\nZ9K2'
+ const MODE_CONFIG = {
+  targhe: {
+    // accetta targhe alfanumeriche di 4 o 6 caratteri
+    codeRe: /^[A-Z0-9]{4,6}$/,
+    extract(raw) {
+      const text = (raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+      // Trova tutti i blocchi alfanumerici di lunghezza 4–6
+      const matches = text.match(/[A-Z0-9]{4,6}/g);
+      if (!matches || !matches.length) return '';
+
+      // Preferisci il match più lungo (così VT2961 vince su eventuali sottostringhe)
+      let best = matches[0];
+      for (const m of matches) {
+        if (m.length > best.length) best = m;
+      }
+      return best;
     },
-    batterie: {
-      // seriali batterie, es. BPFCV21L7H11886
-      codeRe: /^[A-Z0-9]{5,40}$/,
-      extract(raw) {
-        return (raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-      },
-      hint: 'Modalità BATTERIE: legge seriali alfanumerici (es. BPFCV21L7H11886).',
-      label: 'Batterie',
-      placeholder: 'Esempi:\nBPFCV21L7H11886\nBPFCV21L7H11887\nBPFCV21L7H11888'
-    }
-  };
+    hint: 'Modalità TARGHE: accetta codici alfanumerici di 4 o 6 caratteri.',
+    label: 'Targhe',
+    placeholder: 'Esempi:\nAB45\n3HTY\nZ9K2\nVT2961'
+  },
+
+  batterie: {
+    codeRe: /^[A-Z0-9]{5,40}$/,
+    extract(raw) {
+      return (raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    },
+    hint: 'Modalità BATTERIE: legge seriali alfanumerici (es. BPFCV21L7H11886).',
+    label: 'Batterie',
+    placeholder: 'Esempi:\nBPFCV21L7H11886\nBPFCV21L7H11887\nBPFCV21L7H11888'
+  }
+};
+
 
   let currentMode = (()=>{
     try {
